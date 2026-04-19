@@ -7,18 +7,22 @@ from aiogram.filters import CommandStart, Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
+from aiogram.client.default import DefaultBotProperties # Для исправления предупреждения
 from os import getenv
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Настройки
+# Настройки (убедись, что на Bothost эти переменные заполнены!)
 BOT_TOKEN = getenv("BOT_TOKEN")
-ADMIN_ID = int(getenv("ADMIN_ID"))
-CHANNEL_ID = getenv("CHANNEL_ID")
-CHANNEL_URL = getenv("CHANNEL_URL")
+ADMIN_ID = int(getenv("ADMIN_ID") if getenv("ADMIN_ID") else 0)
+CHANNEL_ID = getenv("CHANNEL_ID") # Для обязательной подписки (если нужно)
 
-bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+# Исправляем ту самую ошибку из логов:
+bot = Bot(
+    token=BOT_TOKEN, 
+    default=DefaultBotProperties(parse_mode="HTML")
+)
 dp = Dispatcher()
 
 # --- БАЗА ДАННЫХ ---
@@ -27,179 +31,161 @@ cursor = conn.cursor()
 cursor.execute('''CREATE TABLE IF NOT EXISTS users 
                (id INTEGER PRIMARY KEY, tg_id BIGINT UNIQUE, username TEXT, 
                alias TEXT UNIQUE, lang TEXT DEFAULT 'ru', 
-               sent_count INTEGER DEFAULT 0, rec_count INTEGER DEFAULT 0, 
-               join_date TEXT)''')
+               sent_count INTEGER DEFAULT 0, rec_count INTEGER DEFAULT 0)''')
 cursor.execute('''CREATE TABLE IF NOT EXISTS messages 
                (id INTEGER PRIMARY KEY AUTOINCREMENT, sender_id BIGINT, 
                receiver_id BIGINT, msg_id_in_receiver INTEGER)''')
 conn.commit()
 
-# --- СОСТОЯНИЯ ---
 class Form(StatesGroup):
-    waiting_for_alias = State()
     waiting_for_anon_msg = State()
     waiting_for_broadcast = State()
 
-# --- ЛОКАЛИЗАЦИЯ ---
+# --- ТЕКСТЫ ---
 TEXTS = {
     'ru': {
-        'start': "<b>👋 Привет!</b>\n\nЗдесь тебе могут писать <b>анонимно</b>. Твоя ссылка ниже. Ты можешь отправлять текст, фото, видео и даже голосовые!\n\n🔗 <code>t.me/{bot_user}?start={uid}</code>",
-        'profile': "👤 <b>Профиль</b>\n\nСтатистика:\n📤 Отправлено: {sent}\n📥 Получено: {rec}\n\nТвоя ссылка:\n<code>{link}</code>",
-        'set_lang': "Выберите язык / Choose language:",
-        'sub_req': "❌ Для работы с ботом подпишитесь на канал!",
-        'anon_ready': "🚀 Отправь сообщение (текст, фото или видео) для этого пользователя:",
-        'msg_sent': "✅ Сообщение отправлено! Вы можете удалить его кнопкой ниже.",
-        'msg_del': "🗑 Удалить сообщение",
-        'deleted': "💥 Сообщение было удалено отправителем.",
-        'reply': "💬 Ответить"
+        'start': "<b>👋 Привет!</b>\n\nВ этом боте тебе могут писать <b>анонимно</b>. Отправь свою ссылку друзьям, чтобы получить первое сообщение!\n\nТвоя ссылка:\n🔗 <code>t.me/{bot_user}?start={uid}</code>",
+        'profile': "👤 <b>Профиль</b>\n\n📊 Статистика:\n📤 Отправлено: {sent}\n📥 Получено: {rec}\n\nТвоя ссылка:\n<code>{link}</code>",
+        'anon_ready': "🚀 Напиши сообщение для этого пользователя.\n<i>Можно отправить текст, фото, видео или голосовое:</i>",
+        'msg_sent': "✅ Сообщение отправлено!",
+        'msg_del': "🗑 Удалить",
+        'reply': "💬 Ответить",
+        'lang_btn': "🌍 Сменить язык",
+        'lang_changed': "✅ Язык изменен на Русский"
     },
     'en': {
-        'start': "<b>👋 Hi!</b>\n\nHere people can write to you <b>anonymously</b>. Your link is below. You can send text, photos, videos, and even voice messages!\n\n🔗 <code>t.me/{bot_user}?start={uid}</code>",
-        'profile': "👤 <b>Profile</b>\n\nStats:\n📤 Sent: {sent}\n📥 Received: {rec}\n\nYour link:\n<code>{link}</code>",
-        'set_lang': "Choose language:",
-        'sub_req': "❌ Please subscribe to our channel to use the bot!",
-        'anon_ready': "🚀 Send your message (text, photo, or video) to this user:",
-        'msg_sent': "✅ Message sent! You can delete it using the button below.",
-        'msg_del': "🗑 Delete message",
-        'deleted': "💥 Message was deleted by the sender.",
-        'reply': "💬 Reply"
+        'start': "<b>👋 Hi!</b>\n\nIn this bot, people can write to you <b>anonymously</b>. Send your link to friends to get your first message!\n\nYour link:\n🔗 <code>t.me/{bot_user}?start={uid}</code>",
+        'profile': "👤 <b>Profile</b>\n\n📊 Stats:\n📤 Sent: {sent}\n📥 Received: {rec}\n\nYour link:\n<code>{link}</code>",
+        'anon_ready': "🚀 Write a message for this user.\n<i>You can send text, photos, videos, or voice:</i>",
+        'msg_sent': "✅ Message sent!",
+        'msg_del': "🗑 Delete",
+        'reply': "💬 Reply",
+        'lang_btn': "🌍 Change Language",
+        'lang_changed': "✅ Language changed to English"
     }
 }
 
-# --- ФУНКЦИИ ХЕЛПЕРЫ ---
-def get_user(tg_id):
-    return cursor.execute("SELECT * FROM users WHERE tg_id = ?", (tg_id,)).fetchone()
-
-async def check_sub(user_id):
-    try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-        return member.status != 'left'
-    except: return True
-
-# --- КЛАВИАТУРЫ ---
+# --- КНОПКИ ---
 def main_kb(lang):
     kb = ReplyKeyboardBuilder()
     if lang == 'ru':
-        kb.button(text="👤 Профиль"), kb.button(text="⚙️ Настройки"), kb.button(text="📊 Статистика")
+        kb.button(text="👤 Профиль"), kb.button(text="🌍 Сменить язык")
     else:
-        kb.button(text="👤 Profile"), kb.button(text="⚙️ Settings"), kb.button(text="📊 Stats")
-    kb.adjust(1, 2)
+        kb.button(text="👤 Profile"), kb.button(text="🌍 Change Language")
+    kb.adjust(1)
     return kb.as_markup(resize_keyboard=True)
 
-# --- ОБРАБОТЧИКИ ---
+def lang_inline():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🇷🇺 Русский", callback_data="setlang_ru")
+    kb.button(text="🇬🇧 English", callback_data="setlang_en")
+    return kb.as_markup()
+
+# --- ЛОГИКА ---
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     args = message.text.split()
-    user = get_user(message.from_user.id)
+    user_id = message.from_user.id
     
+    # Регистрация
+    user = cursor.execute("SELECT * FROM users WHERE tg_id = ?", (user_id,)).fetchone()
     if not user:
-        cursor.execute("INSERT INTO users (tg_id, username, join_date) VALUES (?, ?, ?)", 
-                       (message.from_user.id, message.from_user.username, datetime.now().date()))
+        cursor.execute("INSERT INTO users (tg_id, username) VALUES (?, ?)", (user_id, message.from_user.username))
         conn.commit()
-        user = get_user(message.from_user.id)
+        user = cursor.execute("SELECT * FROM users WHERE tg_id = ?", (user_id,)).fetchone()
 
-    # Проверка на анонимное сообщение (через start)
+    # Если перешли по ссылке
     if len(args) > 1:
-        target_id = args[1]
-        # Проверяем кастомную ссылку
-        target = cursor.execute("SELECT tg_id FROM users WHERE alias = ? OR tg_id = ?", (target_id, target_id)).fetchone()
-        if target:
-            await state.update_data(target_id=target[0])
-            await message.answer(TEXTS[user[4]]['anon_ready'])
-            await state.set_state(Form.waiting_for_anon_msg)
+        target_id = int(args[1])
+        if target_id == user_id:
+            await message.answer("❌ Нельзя писать самому себе!")
             return
+        await state.update_data(target_id=target_id)
+        await message.answer(TEXTS[user[4]]['anon_ready'])
+        await state.set_state(Form.waiting_for_anon_msg)
+        return
 
     bot_info = await bot.get_me()
-    link = f"t.me/{bot_info.username}?start={user[1]}"
-    await message.answer(TEXTS[user[4]]['start'].format(bot_user=bot_info.username, uid=user[3] or user[1]), 
-                         reply_markup=main_kb(user[4]))
+    await message.answer(
+        TEXTS[user[4]]['start'].format(bot_user=bot_info.username, uid=user[1]),
+        reply_markup=main_kb(user[4])
+    )
 
 @dp.message(Form.waiting_for_anon_msg)
-async def handle_anon_delivery(message: types.Message, state: FSMContext):
+async def anon_delivery(message: types.Message, state: FSMContext):
     data = await state.get_data()
     target_id = data['target_id']
-    user = get_user(message.from_user.id)
+    user = cursor.execute("SELECT * FROM users WHERE tg_id = ?", (message.from_user.id,)).fetchone()
     
-    # Кнопка удаления для отправителя
-    del_kb = InlineKeyboardBuilder()
-    
-    # Пересылаем сообщение
     try:
+        # Пересылаем контент (текст, фото, видео и т.д.)
         sent = await message.copy_to(chat_id=target_id)
         
-        # Сохраняем связь в БД для удаления
+        # Сохраняем в БД для удаления
         cursor.execute("INSERT INTO messages (sender_id, receiver_id, msg_id_in_receiver) VALUES (?, ?, ?)",
                        (message.from_user.id, target_id, sent.message_id))
-        msg_db_id = cursor.lastrowid
         conn.commit()
-        
+        msg_db_id = cursor.lastrowid
+
+        # Кнопка удаления для отправителя
+        del_kb = InlineKeyboardBuilder()
         del_kb.button(text=TEXTS[user[4]]['msg_del'], callback_data=f"del_{msg_db_id}")
+        
         await message.answer(TEXTS[user[4]]['msg_sent'], reply_markup=del_kb.as_markup())
         
-        # Кнопка ответа для получателя
+        # Уведомление получателю
         reply_kb = InlineKeyboardBuilder()
-        reply_kb.button(text=TEXTS['ru' if user[4]=='ru' else 'en']['reply'], callback_data=f"reply_{message.from_user.id}")
-        await bot.send_message(target_id, "✉️ <b>Новое анонимное сообщение!</b>", reply_markup=reply_kb.as_markup())
+        reply_kb.button(text=TEXTS[user[4]]['reply'], callback_data=f"reply_{message.from_user.id}")
+        await bot.send_message(target_id, "📩 <b>Новое анонимное сообщение!</b>", reply_markup=reply_kb.as_markup())
         
-        # Обновляем статистику
         cursor.execute("UPDATE users SET sent_count = sent_count + 1 WHERE tg_id = ?", (message.from_user.id,))
         cursor.execute("UPDATE users SET rec_count = rec_count + 1 WHERE tg_id = ?", (target_id,))
         conn.commit()
-        
-    except Exception as e:
-        await message.answer("❌ Ошибка при отправке. Возможно, пользователь заблокировал бота.")
+    except:
+        await message.answer("❌ Ошибка: пользователь заблокировал бота.")
     
     await state.clear()
-
-@dp.callback_query(F.data.startswith("del_"))
-async def delete_msg(call: types.CallbackQuery):
-    msg_db_id = call.data.split("_")[1]
-    msg_data = cursor.execute("SELECT * FROM messages WHERE id = ?", (msg_db_id,)).fetchone()
-    
-    if msg_data:
-        try:
-            await bot.delete_message(chat_id=msg_data[2], message_id=msg_data[3])
-            await bot.send_message(msg_data[2], TEXTS['ru']['deleted']) # Упрощенно ru
-            await call.answer("Удалено!")
-            await call.message.delete()
-        except:
-            await call.answer("Ошибка или сообщение слишком старое", show_alert=True)
 
 @dp.message(F.text.in_(["👤 Профиль", "👤 Profile"]))
 async def profile(message: types.Message):
-    user = get_user(message.from_user.id)
+    user = cursor.execute("SELECT * FROM users WHERE tg_id = ?", (message.from_user.id,)).fetchone()
     bot_info = await bot.get_me()
-    link = f"t.me/{bot_info.username}?start={user[3] or user[1]}"
-    await message.answer(TEXTS[user[4]]['profile'].format(sent=user[5], rec=user[6], link=link))
+    link = f"t.me/{bot_info.username}?start={user[1]}"
+    await message.answer(
+        TEXTS[user[4]]['profile'].format(sent=user[5], rec=user[6], link=link),
+        reply_markup=main_kb(user[4])
+    )
 
-# --- АДМИН ПАНЕЛЬ (Рассылка) ---
-@dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
-async def admin_panel(message: types.Message):
-    kb = InlineKeyboardBuilder()
-    kb.button(text="📢 Рассылка", callback_data="broadcast")
-    await message.answer("🛠 Админ-панель", reply_markup=kb.as_markup())
+@dp.message(F.text.in_(["🌍 Сменить язык", "🌍 Change Language"]))
+async def change_lang(message: types.Message):
+    await message.answer("Выберите язык / Choose language:", reply_markup=lang_inline())
 
-@dp.callback_query(F.data == "broadcast", F.from_user.id == ADMIN_ID)
-async def broadcast_start(call: types.CallbackQuery, state: FSMContext):
-    await call.message.answer("Введите текст рассылки:")
-    await state.set_state(Form.waiting_for_broadcast)
+@dp.callback_query(F.data.startswith("setlang_"))
+async def set_lang(call: types.CallbackQuery):
+    new_lang = call.data.split("_")[1]
+    cursor.execute("UPDATE users SET lang = ? WHERE tg_id = ?", (new_lang, call.from_user.id))
+    conn.commit()
+    await call.message.delete()
+    await call.message.answer(TEXTS[new_lang]['lang_changed'], reply_markup=main_kb(new_lang))
 
-@dp.message(Form.waiting_for_broadcast)
-async def do_broadcast(message: types.Message, state: FSMContext):
-    users = cursor.execute("SELECT tg_id FROM users").fetchall()
-    count = 0
-    for u in users:
+@dp.callback_query(F.data.startswith("del_"))
+async def delete_anon(call: types.CallbackQuery):
+    msg_id = int(call.data.split("_")[1])
+    msg = cursor.execute("SELECT * FROM messages WHERE id = ?", (msg_id,)).fetchone()
+    if msg:
         try:
-            await message.copy_to(u[0])
-            count += 1
-            await asyncio.sleep(0.05) # Защита от спам-фильтра
-        except: pass
-    await message.answer(f"✅ Рассылка завершена. Получили {count} чел.")
-    await state.clear()
+            await bot.delete_message(chat_id=msg[2], message_id=msg[3])
+            await call.answer("Удалено!")
+            await call.message.edit_text("🗑 Сообщение удалено.")
+        except:
+            await call.answer("Ошибка или прошло более 48 часов", show_alert=True)
 
+# Запуск
 async def main():
+    print("--- БОТ ЗАПУЩЕН ---") # Появится в логах Bothost
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
