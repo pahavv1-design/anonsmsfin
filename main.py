@@ -189,3 +189,15 @@ async def main():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
+    async def main():
+    try:
+        print(" СТАТУС: Попытка запуска бота...")
+        bot_info = await bot.get_me()
+        print(f" СТАТУС: Бот @{bot_info.username} успешно авторизован!")
+        await dp.start_polling(bot)
+    except Exception as e:
+        print(f" КРИТИЧЕСКАЯ ОШИБКА ПРИ ЗАПУСКЕ: {e}")
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(main())
