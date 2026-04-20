@@ -9,6 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from aiogram.client.default import DefaultBotProperties
+from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -31,12 +32,17 @@ cur.execute('''CREATE TABLE IF NOT EXISTS users (
     sent INTEGER DEFAULT 0, 
     rec INTEGER DEFAULT 0)''')
 cur.execute("CREATE TABLE IF NOT EXISTS msgs (id INTEGER PRIMARY KEY AUTOINCREMENT, s_id BIGINT, r_id BIGINT, m_id INTEGER)")
+# Новая таблица для каналов
+cur.execute("CREATE TABLE IF NOT EXISTS channels (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id BIGINT, link TEXT)")
 db.commit()
 
 class MyStates(StatesGroup):
     txt = State()
     mail = State()
     set_alias = State()
+    # Состояния админки
+    admin_broadcast = State()
+    admin_add_channel = State()
 
 # --- ДИЗАЙН ТЕКСТА ---
 STR = {
@@ -62,7 +68,8 @@ STR = {
         'alias': "✏️ Изменить ник ссылки",
         'lang': "🌍 Сменить язык",
         'back': "⬅️ Назад",
-        'new_msg': "📬 <b>Вам новое анонимное сообщение!</b>"
+        'new_msg': "📬 <b>Вам новое анонимное сообщение!</b>",
+        'sub_req': "⚠️ <b>Для использования бота, подпишитесь на наши каналы:</b>"
     },
     'en': {
         'hi': "<b>Start receiving anonymous messages right now!</b>\n\n"
@@ -85,9 +92,32 @@ STR = {
         'alias': "✏️ Change Alias",
         'lang': "🌍 Change Language",
         'back': "⬅️ Back",
-        'new_msg': "📬 <b>You have a new anonymous message!</b>"
+        'new_msg': "📬 <b>You have a new anonymous message!</b>",
+        'sub_req': "⚠️ <b>To use the bot, subscribe to our channels:</b>"
     }
 }
+
+# --- ФУНКЦИИ ---
+def get_u(uid):
+    u = cur.execute("SELECT * FROM users WHERE tg_id = ?", (uid,)).fetchone()
+    if not u:
+        cur.execute("INSERT INTO users (tg_id) VALUES (?)", (uid,))
+        db.commit()
+        u = cur.execute("SELECT * FROM users WHERE tg_id = ?", (uid,)).fetchone()
+    return u
+
+async def check_sub(user_id):
+    """Проверка подписки на все обязательные каналы"""
+    channels = cur.execute("SELECT chat_id FROM channels").fetchall()
+    for (chat_id,) in channels:
+        try:
+            member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+            if member.status in ['left', 'kicked']:
+                return False
+        except Exception:
+            # Если бот не админ в канале или канал не существует
+            continue
+    return True
 
 # --- КЛАВИАТУРЫ ---
 def main_kb(lang):
@@ -99,27 +129,104 @@ def main_kb(lang):
     kb.adjust(2)
     return kb.as_markup(resize_keyboard=True)
 
+def sub_kb(lang):
+    """Клавиатура со списком каналов и кнопкой проверки"""
+    kb = InlineKeyboardBuilder()
+    channels = cur.execute("SELECT chat_id, link FROM channels").fetchall()
+    for idx, (chat_id, link) in enumerate(channels, 1):
+        kb.button(text=f"Канал {idx}" if lang == 'ru' else f"Channel {idx}", url=link)
+    kb.button(text="✅ Проверить" if lang == 'ru' else "✅ Check", callback_data="check_sub")
+    kb.adjust(1)
+    return kb.as_markup()
+
 def profile_inline(lang, username, uid_or_alias):
     kb = InlineKeyboardBuilder()
     link = f"https://t.me/{username}?start={uid_or_alias}"
     kb.button(text=STR[lang]['share'], switch_inline_query=f"\nНапиши мне анонимно! 👇\n{link}")
     return kb.as_markup()
 
-# --- ФУНКЦИИ ---
-def get_u(uid):
-    u = cur.execute("SELECT * FROM users WHERE tg_id = ?", (uid,)).fetchone()
-    if not u:
-        cur.execute("INSERT INTO users (tg_id) VALUES (?)", (uid,))
+# --- АДМИН ПАНЕЛЬ ---
+
+@dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
+async def admin_main(msg: types.Message):
+    count = cur.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📢 Рассылка", callback_data="adm_broadcast")
+    kb.button(text="🔗 Упр. каналами", callback_data="adm_channels")
+    kb.adjust(1)
+    await msg.answer(f"👑 <b>Админ-панель</b>\n\nВсего юзеров: <code>{count}</code>", reply_markup=kb.as_markup())
+
+@dp.callback_query(F.data == "adm_broadcast", F.from_user.id == ADMIN_ID)
+async def adm_broadcast_start(call: types.CallbackQuery, state: FSMContext):
+    await call.message.answer("Перешлите сообщение для рассылки (текст, фото, видео и т.д.) или напишите текст.")
+    await state.set_state(MyStates.admin_broadcast)
+    await call.answer()
+
+@dp.message(MyStates.admin_broadcast, F.from_user.id == ADMIN_ID)
+async def adm_broadcast_run(msg: types.Message, state: FSMContext):
+    users = cur.execute("SELECT tg_id FROM users").fetchall()
+    count = 0
+    await msg.answer("🚀 Рассылка запущена...")
+    for (uid,) in users:
+        try:
+            await msg.copy_to(uid)
+            count += 1
+            await asyncio.sleep(0.05) # Защита от спам-фильтра
+        except (TelegramForbiddenError, TelegramBadRequest):
+            continue
+    await msg.answer(f"✅ Рассылка завершена. Получили: {count} человек.")
+    await state.clear()
+
+@dp.callback_query(F.data == "adm_channels", F.from_user.id == ADMIN_ID)
+async def adm_channels_list(call: types.CallbackQuery):
+    channels = cur.execute("SELECT id, chat_id FROM channels").fetchall()
+    text = "🔗 <b>Список каналов для ОП:</b>\n\n"
+    kb = InlineKeyboardBuilder()
+    for cid, chat_id in channels:
+        text += f"ID: <code>{chat_id}</code>\n"
+        kb.button(text=f"❌ {chat_id}", callback_data=f"adm_delchan_{cid}")
+    
+    kb.button(text="➕ Добавить канал", callback_data="adm_addchan")
+    kb.button(text="⬅️ Назад", callback_data="adm_back")
+    kb.adjust(1)
+    await call.message.edit_text(text, reply_markup=kb.as_markup())
+
+@dp.callback_query(F.data == "adm_addchan", F.from_user.id == ADMIN_ID)
+async def adm_addchan_start(call: types.CallbackQuery, state: FSMContext):
+    await call.message.answer("Отправьте ChatID и Ссылку через пробел.\nПример:\n-10012345678 https://t.me/mychannel\n\n<i>Важно: Бот должен быть админом в этом канале!</i>")
+    await state.set_state(MyStates.admin_add_channel)
+    await call.answer()
+
+@dp.message(MyStates.admin_add_channel, F.from_user.id == ADMIN_ID)
+async def adm_addchan_save(msg: types.Message, state: FSMContext):
+    try:
+        chat_id, link = msg.text.split()
+        cur.execute("INSERT INTO channels (chat_id, link) VALUES (?, ?)", (int(chat_id), link))
         db.commit()
-        u = cur.execute("SELECT * FROM users WHERE tg_id = ?", (uid,)).fetchone()
-    return u
+        await msg.answer("✅ Канал добавлен!")
+        await state.clear()
+    except:
+        await msg.answer("❌ Ошибка. Введите данные корректно (ID и ссылку).")
+
+@dp.callback_query(F.data.startswith("adm_delchan_"), F.from_user.id == ADMIN_ID)
+async def adm_delchan(call: types.CallbackQuery):
+    cid = call.data.split("_")[2]
+    cur.execute("DELETE FROM channels WHERE id = ?", (cid,))
+    db.commit()
+    await call.answer("Удалено")
+    await adm_channels_list(call)
 
 # --- ОБРАБОТЧИКИ ---
 
 @dp.message(CommandStart())
 async def cmd_start(msg: types.Message, state: FSMContext):
-    await state.clear() # Сбрасываем любые состояния при команде старт
+    await state.clear()
     u = get_u(msg.from_user.id)
+    
+    # ПРОВЕРКА ПОДПИСКИ
+    if not await check_sub(msg.from_user.id):
+        return await msg.answer(STR[u[3]]['sub_req'], reply_markup=sub_kb(u[3]))
+
     args = msg.text.split()
     me = await bot.get_me()
 
@@ -138,30 +245,42 @@ async def cmd_start(msg: types.Message, state: FSMContext):
     await msg.answer("📸 <i>Вы также можете опубликовать ссылку в Stories прямо сейчас!</i>", 
                      reply_markup=profile_inline(u[3], me.username, u[2] if u[2] else u[1]))
 
-@dp.message(MyStates.txt, ~F.text.startswith("/")) # Игнорируем команды внутри анонимки
+@dp.callback_query(F.data == "check_sub")
+async def callback_check_sub(call: types.CallbackQuery, state: FSMContext):
+    u = get_u(call.from_user.id)
+    if await check_sub(call.from_user.id):
+        await call.message.delete()
+        await cmd_start(call.message, state)
+    else:
+        await call.answer("❌ Вы не подписались на все каналы!", show_alert=True)
+
+@dp.message(MyStates.txt, ~F.text.startswith("/"))
 async def handle_anon(msg: types.Message, state: FSMContext):
+    # Добавляем проверку подписки даже при отправке сообщения
+    if not await check_sub(msg.from_user.id):
+        return await msg.answer("⚠️ Сначала подпишитесь на каналы!", reply_markup=sub_kb('ru'))
+    
     data = await state.get_data()
     u = get_u(msg.from_user.id)
     try:
-        # Пересылка
         res = await msg.copy_to(data['t_id'])
         cur.execute("INSERT INTO msgs (s_id, r_id, m_id) VALUES (?, ?, ?)", (msg.from_user.id, data['t_id'], res.message_id))
         cur.execute("UPDATE users SET sent = sent + 1 WHERE tg_id = ?", (msg.from_user.id,))
         cur.execute("UPDATE users SET rec = rec + 1 WHERE tg_id = ?", (data['t_id'],))
         db.commit()
         
-        # Инлайн для управления
         kb = InlineKeyboardBuilder()
         kb.button(text=STR[u[3]]['del'], callback_data=f"del_{cur.lastrowid}")
         await msg.answer(STR[u[3]]['ok'], reply_markup=kb.as_markup())
         
-        # Получателю
         rk = InlineKeyboardBuilder()
         rk.button(text=STR[u[3]]['rep'], callback_data=f"rep_{msg.from_user.id}")
         await bot.send_message(data['t_id'], STR[u[3]]['new_msg'], reply_markup=rk.as_markup())
     except:
         await msg.answer("❌ Ошибка: не удалось отправить.")
     await state.clear()
+
+# --- Остальные обработчики (Profile, Settings и т.д. остаются как были) ---
 
 @dp.message(F.text.in_(["👤 Профиль", "👤 Profile"]))
 async def profile(msg: types.Message):
@@ -242,81 +361,3 @@ async def run():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     asyncio.run(run())
-    # --- АДМИН ПАНЕЛЬ ---
-
-@dp.message(Command("admin"))
-async def admin_panel(msg: types.Message):
-    # Проверка на админа
-    if msg.from_user.id != ADMIN_ID:
-        return
-
-    # Считаем количество пользователей в базе
-    cur.execute("SELECT COUNT(*) FROM users")
-    total_users = cur.fetchone()[0]
-
-    # Считаем сколько сообщений было отправлено всего через бота
-    cur.execute("SELECT SUM(sent) FROM users")
-    total_messages = cur.fetchone()[0] or 0
-
-    kb = InlineKeyboardBuilder()
-    kb.button(text="📢 Начать рассылку", callback_data="admin_broadcast")
-    kb.button(text="🔄 Обновить", callback_data="admin_stats_update")
-    kb.adjust(1)
-
-    await msg.answer(
-        f"🛠 <b>Панель администратора</b>\n\n"
-        f"👥 <b>Всего пользователей:</b> <code>{total_users}</code>\n"
-        f"✉️ <b>Всего анонимок:</b> <code>{total_messages}</code>\n\n"
-        f"<i>Статистика обновляется в реальном времени.</i>", 
-        reply_markup=kb.as_markup()
-    )
-
-# Обработка обновления статистики
-@dp.callback_query(F.data == "admin_stats_update")
-async def update_stats_call(call: types.CallbackQuery):
-    if call.from_user.id != ADMIN_ID: return
-    
-    cur.execute("SELECT COUNT(*) FROM users")
-    total_users = cur.fetchone()[0]
-    cur.execute("SELECT SUM(sent) FROM users")
-    total_messages = cur.fetchone()[0] or 0
-
-    try:
-        await call.message.edit_text(
-            f"🛠 <b>Панель администратора</b>\n\n"
-            f"👥 <b>Всего пользователей:</b> <code>{total_users}</code>\n"
-            f"✉️ <b>Всего анонимок:</b> <code>{total_messages}</code>\n\n"
-            f"<i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>",
-            reply_markup=call.message.reply_markup
-        )
-    except:
-        await call.answer("Данные актуальны!")
-    await call.answer()
-
-# Рассылка (как в прошлом сообщении)
-@dp.callback_query(F.data == "admin_broadcast")
-async def broadcast_step1(call: types.CallbackQuery, state: FSMContext):
-    if call.from_user.id != ADMIN_ID: return
-    await call.message.answer("📢 <b>Введите сообщение для рассылки:</b>")
-    await state.set_state(MyStates.mail)
-    await call.answer()
-
-@dp.message(MyStates.mail)
-async def broadcast_step2(msg: types.Message, state: FSMContext):
-    if msg.from_user.id != ADMIN_ID: return
-    
-    users = cur.execute("SELECT tg_id FROM users").fetchall()
-    count, blocked = 0, 0
-    
-    status_msg = await msg.answer("⏳ <i>Рассылка...</i>")
-
-    for user in users:
-        try:
-            await msg.copy_to(chat_id=user[0])
-            count += 1
-            await asyncio.sleep(0.05)
-        except:
-            blocked += 1
-    
-    await status_msg.edit_text(f"✅ <b>Готово!</b>\n\nПолучили: {count}\nВ бане: {blocked}")
-    await state.clear()
