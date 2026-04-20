@@ -1,7 +1,5 @@
-import asyncio
-import logging
-import sqlite3
-from datetime import datetime
+import asyncio, logging, sqlite3, random
+from datetime import datetime, timedelta
 from os import getenv
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
@@ -9,355 +7,381 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from aiogram.client.default import DefaultBotProperties
-from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- КОНФИГУРАЦИЯ ---
 BOT_TOKEN = getenv("BOT_TOKEN")
-ADMIN_ID = int(getenv("ADMIN_ID") if getenv("ADMIN_ID") else 0)
+ADMIN_ID = int(getenv("ADMIN_ID") or 0)
 
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-# --- БАЗА ДАННЫХ ---
+# БАЗА ДАННЫХ
 db = sqlite3.connect("bot.db", check_same_thread=False)
 cur = db.cursor()
 cur.execute('''CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY, 
-    tg_id BIGINT UNIQUE, 
-    alias TEXT UNIQUE,
-    lang TEXT DEFAULT 'ru', 
-    sent INTEGER DEFAULT 0, 
-    rec INTEGER DEFAULT 0)''')
+    id INTEGER PRIMARY KEY, tg_id BIGINT UNIQUE, alias TEXT UNIQUE,
+    lang TEXT DEFAULT 'ru', sent INTEGER DEFAULT 0, rec INTEGER DEFAULT 0,
+    level INTEGER DEFAULT 1, exp INTEGER DEFAULT 0, clicks INTEGER DEFAULT 0)''')
 cur.execute("CREATE TABLE IF NOT EXISTS msgs (id INTEGER PRIMARY KEY AUTOINCREMENT, s_id BIGINT, r_id BIGINT, m_id INTEGER)")
-# Новая таблица для каналов
-cur.execute("CREATE TABLE IF NOT EXISTS channels (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id BIGINT, link TEXT)")
+cur.execute("CREATE TABLE IF NOT EXISTS channels (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id BIGINT, link TEXT)")  # Для подписки
+cur.execute("CREATE TABLE IF NOT EXISTS blacklist (user_id BIGINT PRIMARY KEY, until TIMESTAMP)")
 db.commit()
 
-class MyStates(StatesGroup):
+class State(StatesGroup):
     txt = State()
-    mail = State()
-    set_alias = State()
-    # Состояния админки
-    admin_broadcast = State()
-    admin_add_channel = State()
+    alias = State()
+    broadcast = State()  # Для рассылки
+    add_channel = State()  # Для добавления канала
 
-# --- ДИЗАЙН ТЕКСТА ---
-STR = {
+# ТЕКСТЫ
+T = {
     'ru': {
-        'hi': "<b>Начните получать анонимные сообщения прямо сейчас!</b>\n\n"
-              "Ваша ссылка:\n"
-              "🟢 <code>{link}</code>\n\n"
-              "Разместите эту ссылку ☝️ в описании своего профиля Telegram, TikTok или Instagram, чтобы вам могли написать 💬",
-        'prof': "👤 <b>Ваш профиль</b>\n\n"
-                "📊 <b>Статистика:</b>\n"
-                "├ Получено: <code>{r}</code>\n"
-                "└ Отправлено: <code>{s}</code>\n\n"
-                "🔗 <b>Ваша ссылка для Stories:</b>\n"
-                "<code>{link}</code>",
-        'go': "🚀 <b>Отправьте анонимное сообщение...</b>\n\n"
-              "Вы можете отправить текст, фото, видео или голосовое сообщение. "
-              "Получатель не узнает, кто вы!",
-        'ok': "✅ <b>Сообщение доставлено!</b>",
+        'start': "🌟 <b>AnonyChat</b>\n\n🔗 <code>{link}</code>\n\n💡 Размести ссылку в соцсетях!",
+        'profile': "👤 <b>Профиль</b>\n\n📤 Отправлено: {s}\n📥 Получено: {r}\n🏆 Уровень: {lvl}\n🔗 <code>{link}</code>",
+        'go': "✍️ Напиши анонимное сообщение:",
+        'ok': "✅ Доставлено! +5 опыта",
+        'new': "📬 Новое сообщение!",
         'del': "🗑 Удалить",
         'rep': "💬 Ответить",
-        'share': "🔗 Поделиться ссылкой",
-        'settings': "⚙️ Настройки",
-        'alias': "✏️ Изменить ник ссылки",
-        'lang': "🌍 Сменить язык",
-        'back': "⬅️ Назад",
-        'new_msg': "📬 <b>Вам новое анонимное сообщение!</b>",
-        'sub_req': "⚠️ <b>Для использования бота, подпишитесь на наши каналы:</b>"
+        'link': "🔗 <b>Управление ссылкой</b>\n\n<code>{link}</code>\n\n👆 Переходов: {clicks}",
+        'alias_ask': "✏️ Введи новый alias (буквы/цифры/_, 3-20 символов):",
+        'alias_ok': "✅ Готово! Твоя ссылка:\n<code>{link}</code>",
+        'alias_bad': "❌ Занят или неверный формат!",
+        'sub_required': "⚠️ <b>Подпишись на каналы чтобы использовать бота!</b>",
+        'check_sub': "✅ Проверить подписку",
+        'sub_ok': "✅ Спасибо за подписку! Теперь ты можешь пользоваться ботом.",
     },
     'en': {
-        'hi': "<b>Start receiving anonymous messages right now!</b>\n\n"
-              "Your link:\n"
-              "🟢 <code>{link}</code>\n\n"
-              "Place this link ☝️ in your Telegram, TikTok, or Instagram bio to get messages 💬",
-        'prof': "👤 <b>Your Profile</b>\n\n"
-                "📊 <b>Statistics:</b>\n"
-                "├ Received: <code>{r}</code>\n"
-                "└ Sent: <code>{s}</code>\n\n"
-                "🔗 <b>Your link for Stories:</b>\n"
-                "<code>{link}</code>",
-        'go': "🚀 <b>Send an anonymous message...</b>\n\n"
-              "You can send text, photos, video, or voice. The recipient won't know who you are!",
-        'ok': "✅ <b>Message delivered!</b>",
+        'start': "🌟 <b>AnonyChat</b>\n\n🔗 <code>{link}</code>\n\n💡 Share the link!",
+        'profile': "👤 <b>Profile</b>\n\n📤 Sent: {s}\n📥 Received: {r}\n🏆 Level: {lvl}\n🔗 <code>{link}</code>",
+        'go': "✍️ Send anonymous message:",
+        'ok': "✅ Delivered! +5 XP",
+        'new': "📬 New message!",
         'del': "🗑 Delete",
         'rep': "💬 Reply",
-        'share': "🔗 Share link",
-        'settings': "⚙️ Settings",
-        'alias': "✏️ Change Alias",
-        'lang': "🌍 Change Language",
-        'back': "⬅️ Back",
-        'new_msg': "📬 <b>You have a new anonymous message!</b>",
-        'sub_req': "⚠️ <b>To use the bot, subscribe to our channels:</b>"
+        'link': "🔗 <b>Link Manager</b>\n\n<code>{link}</code>\n\n👆 Clicks: {clicks}",
+        'alias_ask': "✏️ Enter new alias (letters/numbers/_, 3-20 chars):",
+        'alias_ok': "✅ Done! Your link:\n<code>{link}</code>",
+        'alias_bad': "❌ Taken or invalid format!",
+        'sub_required': "⚠️ <b>Subscribe to channels to use the bot!</b>",
+        'check_sub': "✅ Check subscription",
+        'sub_ok': "✅ Thanks for subscribing! Now you can use the bot.",
     }
 }
 
-# --- ФУНКЦИИ ---
-def get_u(uid):
+def get_user(uid):
     u = cur.execute("SELECT * FROM users WHERE tg_id = ?", (uid,)).fetchone()
     if not u:
         cur.execute("INSERT INTO users (tg_id) VALUES (?)", (uid,))
         db.commit()
         u = cur.execute("SELECT * FROM users WHERE tg_id = ?", (uid,)).fetchone()
-    return u
+    banned = cur.execute("SELECT until FROM blacklist WHERE user_id = ? AND until > datetime('now')", (uid,)).fetchone()
+    return None if banned else u
 
+def add_exp(uid):
+    cur.execute("UPDATE users SET exp = exp + 5, level = 1 + (exp/100) WHERE tg_id = ?", (uid,))
+    db.commit()
+
+# ПРОВЕРКА ПОДПИСКИ
 async def check_sub(user_id):
-    """Проверка подписки на все обязательные каналы"""
     channels = cur.execute("SELECT chat_id FROM channels").fetchall()
+    if not channels:  # Если нет обязательных каналов - пропускаем
+        return True
     for (chat_id,) in channels:
         try:
             member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
             if member.status in ['left', 'kicked']:
                 return False
-        except Exception:
-            # Если бот не админ в канале или канал не существует
+        except:
             continue
     return True
 
-# --- КЛАВИАТУРЫ ---
-def main_kb(lang):
-    kb = ReplyKeyboardBuilder()
-    if lang == 'ru':
-        kb.button(text="👤 Профиль"), kb.button(text="⚙️ Настройки")
-    else:
-        kb.button(text="👤 Profile"), kb.button(text="⚙️ Settings")
-    kb.adjust(2)
-    return kb.as_markup(resize_keyboard=True)
-
+# КЛАВИАТУРА ПОДПИСКИ
 def sub_kb(lang):
-    """Клавиатура со списком каналов и кнопкой проверки"""
-    kb = InlineKeyboardBuilder()
-    channels = cur.execute("SELECT chat_id, link FROM channels").fetchall()
-    for idx, (chat_id, link) in enumerate(channels, 1):
-        kb.button(text=f"Канал {idx}" if lang == 'ru' else f"Channel {idx}", url=link)
-    kb.button(text="✅ Проверить" if lang == 'ru' else "✅ Check", callback_data="check_sub")
-    kb.adjust(1)
-    return kb.as_markup()
+    ikb = InlineKeyboardBuilder()
+    channels = cur.execute("SELECT link FROM channels").fetchall()
+    for i, (link,) in enumerate(channels, 1):
+        ikb.button(text=f"📢 Канал {i}" if lang=='ru' else f"📢 Channel {i}", url=link)
+    ikb.button(text=T[lang]['check_sub'], callback_data="check_sub")
+    ikb.adjust(1)
+    return ikb.as_markup()
 
-def profile_inline(lang, username, uid_or_alias):
-    kb = InlineKeyboardBuilder()
-    link = f"https://t.me/{username}?start={uid_or_alias}"
-    kb.button(text=STR[lang]['share'], switch_inline_query=f"\nНапиши мне анонимно! 👇\n{link}")
-    return kb.as_markup()
+def kb(lang):
+    rkb = ReplyKeyboardBuilder()
+    for btn in ["👤 Profile", "🔗 Link", "⚙️ Settings"] if lang == 'en' else ["👤 Профиль", "🔗 Ссылка", "⚙️ Настройки"]:
+        rkb.button(text=btn)
+    rkb.adjust(2)
+    return rkb.as_markup(resize_keyboard=True)
 
-# --- АДМИН ПАНЕЛЬ ---
-
-@dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
-async def admin_main(msg: types.Message):
-    count = cur.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    kb = InlineKeyboardBuilder()
-    kb.button(text="📢 Рассылка", callback_data="adm_broadcast")
-    kb.button(text="🔗 Упр. каналами", callback_data="adm_channels")
-    kb.adjust(1)
-    await msg.answer(f"👑 <b>Админ-панель</b>\n\nВсего юзеров: <code>{count}</code>", reply_markup=kb.as_markup())
-
-@dp.callback_query(F.data == "adm_broadcast", F.from_user.id == ADMIN_ID)
-async def adm_broadcast_start(call: types.CallbackQuery, state: FSMContext):
-    await call.message.answer("Перешлите сообщение для рассылки (текст, фото, видео и т.д.) или напишите текст.")
-    await state.set_state(MyStates.admin_broadcast)
-    await call.answer()
-
-@dp.message(MyStates.admin_broadcast, F.from_user.id == ADMIN_ID)
-async def adm_broadcast_run(msg: types.Message, state: FSMContext):
-    users = cur.execute("SELECT tg_id FROM users").fetchall()
-    count = 0
-    await msg.answer("🚀 Рассылка запущена...")
-    for (uid,) in users:
-        try:
-            await msg.copy_to(uid)
-            count += 1
-            await asyncio.sleep(0.05) # Защита от спам-фильтра
-        except (TelegramForbiddenError, TelegramBadRequest):
-            continue
-    await msg.answer(f"✅ Рассылка завершена. Получили: {count} человек.")
-    await state.clear()
-
-@dp.callback_query(F.data == "adm_channels", F.from_user.id == ADMIN_ID)
-async def adm_channels_list(call: types.CallbackQuery):
-    channels = cur.execute("SELECT id, chat_id FROM channels").fetchall()
-    text = "🔗 <b>Список каналов для ОП:</b>\n\n"
-    kb = InlineKeyboardBuilder()
-    for cid, chat_id in channels:
-        text += f"ID: <code>{chat_id}</code>\n"
-        kb.button(text=f"❌ {chat_id}", callback_data=f"adm_delchan_{cid}")
-    
-    kb.button(text="➕ Добавить канал", callback_data="adm_addchan")
-    kb.button(text="⬅️ Назад", callback_data="adm_back")
-    kb.adjust(1)
-    await call.message.edit_text(text, reply_markup=kb.as_markup())
-
-@dp.callback_query(F.data == "adm_addchan", F.from_user.id == ADMIN_ID)
-async def adm_addchan_start(call: types.CallbackQuery, state: FSMContext):
-    await call.message.answer("Отправьте ChatID и Ссылку через пробел.\nПример:\n-10012345678 https://t.me/mychannel\n\n<i>Важно: Бот должен быть админом в этом канале!</i>")
-    await state.set_state(MyStates.admin_add_channel)
-    await call.answer()
-
-@dp.message(MyStates.admin_add_channel, F.from_user.id == ADMIN_ID)
-async def adm_addchan_save(msg: types.Message, state: FSMContext):
-    try:
-        chat_id, link = msg.text.split()
-        cur.execute("INSERT INTO channels (chat_id, link) VALUES (?, ?)", (int(chat_id), link))
-        db.commit()
-        await msg.answer("✅ Канал добавлен!")
-        await state.clear()
-    except:
-        await msg.answer("❌ Ошибка. Введите данные корректно (ID и ссылку).")
-
-@dp.callback_query(F.data.startswith("adm_delchan_"), F.from_user.id == ADMIN_ID)
-async def adm_delchan(call: types.CallbackQuery):
-    cid = call.data.split("_")[2]
-    cur.execute("DELETE FROM channels WHERE id = ?", (cid,))
-    db.commit()
-    await call.answer("Удалено")
-    await adm_channels_list(call)
-
-# --- ОБРАБОТЧИКИ ---
+# ============= КОМАНДЫ =============
 
 @dp.message(CommandStart())
-async def cmd_start(msg: types.Message, state: FSMContext):
+async def start(m: types.Message, state: State):
     await state.clear()
-    u = get_u(msg.from_user.id)
+    args = m.text.split()
+    me = await bot.get_me()
+    
+    # Переход по ссылке
+    if len(args) > 1:
+        target = args[1]
+        tu = cur.execute("SELECT tg_id FROM users WHERE tg_id = ? OR alias = ?", (target, target)).fetchone()
+        if tu and tu[0] != m.from_user.id:
+            # ПРОВЕРКА ПОДПИСКИ перед отправкой
+            if not await check_sub(m.from_user.id):
+                u = get_user(m.from_user.id)
+                if u:
+                    return await m.answer(T[u[3]]['sub_required'], reply_markup=sub_kb(u[3]))
+                return
+            cur.execute("UPDATE users SET clicks = clicks + 1 WHERE tg_id = ?", (tu[0],))
+            db.commit()
+            await state.update_data(t_id=tu[0])
+            u = get_user(m.from_user.id)
+            if u: await m.answer(T[u[3]]['go'], reply_markup=kb(u[3]))
+            await state.set_state(State.txt)
+            return
+    
+    u = get_user(m.from_user.id)
+    if not u: return await m.answer("🚫 Бан до снятия блокировки")
     
     # ПРОВЕРКА ПОДПИСКИ
-    if not await check_sub(msg.from_user.id):
-        return await msg.answer(STR[u[3]]['sub_req'], reply_markup=sub_kb(u[3]))
-
-    args = msg.text.split()
-    me = await bot.get_me()
-
-    if len(args) > 1:
-        target_val = args[1]
-        t_user = cur.execute("SELECT tg_id FROM users WHERE tg_id = ? OR alias = ?", (target_val, target_val)).fetchone()
-        if t_user and t_user[0] != msg.from_user.id:
-            await state.update_data(t_id=t_user[0])
-            await msg.answer(STR[u[3]]['go'])
-            await state.set_state(MyStates.txt)
-            return
-
-    link = f"t.me/{me.username}?start={u[2] if u[2] else u[1]}"
-    await msg.answer(STR[u[3]]['hi'].format(link=link), 
-                     reply_markup=main_kb(u[3]))
-    await msg.answer("📸 <i>Вы также можете опубликовать ссылку в Stories прямо сейчас!</i>", 
-                     reply_markup=profile_inline(u[3], me.username, u[2] if u[2] else u[1]))
-
-@dp.callback_query(F.data == "check_sub")
-async def callback_check_sub(call: types.CallbackQuery, state: FSMContext):
-    u = get_u(call.from_user.id)
-    if await check_sub(call.from_user.id):
-        await call.message.delete()
-        await cmd_start(call.message, state)
-    else:
-        await call.answer("❌ Вы не подписались на все каналы!", show_alert=True)
-
-@dp.message(MyStates.txt, ~F.text.startswith("/"))
-async def handle_anon(msg: types.Message, state: FSMContext):
-    # Добавляем проверку подписки даже при отправке сообщения
-    if not await check_sub(msg.from_user.id):
-        return await msg.answer("⚠️ Сначала подпишитесь на каналы!", reply_markup=sub_kb('ru'))
+    if not await check_sub(m.from_user.id):
+        return await m.answer(T[u[3]]['sub_required'], reply_markup=sub_kb(u[3]))
     
-    data = await state.get_data()
-    u = get_u(msg.from_user.id)
-    try:
-        res = await msg.copy_to(data['t_id'])
-        cur.execute("INSERT INTO msgs (s_id, r_id, m_id) VALUES (?, ?, ?)", (msg.from_user.id, data['t_id'], res.message_id))
-        cur.execute("UPDATE users SET sent = sent + 1 WHERE tg_id = ?", (msg.from_user.id,))
-        cur.execute("UPDATE users SET rec = rec + 1 WHERE tg_id = ?", (data['t_id'],))
-        db.commit()
-        
-        kb = InlineKeyboardBuilder()
-        kb.button(text=STR[u[3]]['del'], callback_data=f"del_{cur.lastrowid}")
-        await msg.answer(STR[u[3]]['ok'], reply_markup=kb.as_markup())
-        
-        rk = InlineKeyboardBuilder()
-        rk.button(text=STR[u[3]]['rep'], callback_data=f"rep_{msg.from_user.id}")
-        await bot.send_message(data['t_id'], STR[u[3]]['new_msg'], reply_markup=rk.as_markup())
-    except:
-        await msg.answer("❌ Ошибка: не удалось отправить.")
-    await state.clear()
+    alias = u[2] or str(u[1])
+    link = f"t.me/{me.username}?start={alias}"
+    await m.answer(T[u[3]]['start'].format(link=link), reply_markup=kb(u[3]))
 
-# --- Остальные обработчики (Profile, Settings и т.д. остаются как были) ---
+# ПРОВЕРКА ПОДПИСКИ (кнопка)
+@dp.callback_query(F.data == "check_sub")
+async def check_sub_callback(call: types.CallbackQuery):
+    if await check_sub(call.from_user.id):
+        u = get_user(call.from_user.id)
+        await call.message.delete()
+        me = await bot.get_me()
+        alias = u[2] or str(u[1])
+        link = f"t.me/{me.username}?start={alias}"
+        await call.message.answer(T[u[3]]['start'].format(link=link), reply_markup=kb(u[3]))
+    else:
+        u = get_user(call.from_user.id)
+        await call.answer("❌ Подпишись на все каналы!" if u[3]=='ru' else "❌ Subscribe to all channels!", show_alert=True)
 
-@dp.message(F.text.in_(["👤 Профиль", "👤 Profile"]))
-async def profile(msg: types.Message):
-    u = get_u(msg.from_user.id)
+@dp.message(F.text.in_(["👤 Profile", "👤 Профиль"]))
+async def profile(m: types.Message):
+    u = get_user(m.from_user.id)
+    if not u: return
+    if not await check_sub(m.from_user.id):
+        return await m.answer(T[u[3]]['sub_required'], reply_markup=sub_kb(u[3]))
     me = await bot.get_me()
-    link = f"t.me/{me.username}?start={u[2] if u[2] else u[1]}"
-    await msg.answer(STR[u[3]]['prof'].format(s=u[4], r=u[5], link=link), 
-                     reply_markup=profile_inline(u[3], me.username, u[2] if u[2] else u[1]))
+    alias = u[2] or str(u[1])
+    link = f"t.me/{me.username}?start={alias}"
+    await m.answer(T[u[3]]['profile'].format(s=u[4], r=u[5], lvl=u[6], link=link), reply_markup=kb(u[3]))
 
-@dp.message(F.text.in_(["⚙️ Настройки", "⚙️ Settings"]))
-async def settings(msg: types.Message):
-    u = get_u(msg.from_user.id)
-    kb = InlineKeyboardBuilder()
-    kb.button(text=STR[u[3]]['alias'], callback_data="set_alias")
-    kb.button(text=STR[u[3]]['lang'], callback_data="set_lang")
-    kb.adjust(1)
-    await msg.answer(f"<b>{STR[u[3]]['settings']}</b>", reply_markup=kb.as_markup())
+@dp.message(F.text.in_(["🔗 Link", "🔗 Ссылка"]))
+async def link_menu(m: types.Message):
+    u = get_user(m.from_user.id)
+    if not u: return
+    if not await check_sub(m.from_user.id):
+        return await m.answer(T[u[3]]['sub_required'], reply_markup=sub_kb(u[3]))
+    me = await bot.get_me()
+    alias = u[2] or str(u[1])
+    link = f"t.me/{me.username}?start={alias}"
+    ikb = InlineKeyboardBuilder()
+    ikb.button(text="✏️ Изменить" if u[3]=='ru' else "✏️ Change", callback_data="ch_alias")
+    ikb.button(text="🎲 Случайный" if u[3]=='ru' else "🎲 Random", callback_data="rand_alias")
+    await m.answer(T[u[3]]['link'].format(link=link, clicks=u[8] if len(u)>8 else 0), reply_markup=ikb.as_markup())
 
-@dp.callback_query(F.data == "set_lang")
-async def lang_call(call: types.CallbackQuery):
-    kb = InlineKeyboardBuilder()
-    kb.button(text="🇷🇺 Русский", callback_data="l_ru")
-    kb.button(text="🇬🇧 English", callback_data="l_en")
-    await call.message.edit_text("Выберите язык / Choose language:", reply_markup=kb.as_markup())
+@dp.message(F.text.in_(["⚙️ Settings", "⚙️ Настройки"]))
+async def settings(m: types.Message):
+    u = get_user(m.from_user.id)
+    if not u: return
+    ikb = InlineKeyboardBuilder()
+    ikb.button(text="🇷🇺 Русский", callback_data="lang_ru")
+    ikb.button(text="🇬🇧 English", callback_data="lang_en")
+    await m.answer("🌍 Язык / Language:", reply_markup=ikb.as_markup())
 
-@dp.callback_query(F.data.startswith("l_"))
-async def set_l(call: types.CallbackQuery):
+@dp.callback_query(F.data.startswith("lang_"))
+async def set_lang(call: types.CallbackQuery):
     l = call.data.split("_")[1]
     cur.execute("UPDATE users SET lang = ? WHERE tg_id = ?", (l, call.from_user.id))
     db.commit()
     await call.message.delete()
-    await call.message.answer("✅ Success!", reply_markup=main_kb(l))
+    await call.message.answer("✅ Language changed!" if l=='en' else "✅ Язык изменен!", reply_markup=kb(l))
 
-@dp.callback_query(F.data == "set_alias")
-async def alias_call(call: types.CallbackQuery, state: FSMContext):
-    await call.message.answer("<b>Введите новый ник для вашей ссылки:</b>\n<i>Например: pavel_2024</i>")
-    await state.set_state(MyStates.set_alias)
+@dp.callback_query(F.data == "ch_alias")
+async def ch_alias(call: types.CallbackQuery, state: State):
+    u = get_user(call.from_user.id)
+    await call.message.answer(T[u[3]]['alias_ask'])
+    await state.set_state(State.alias)
     await call.answer()
 
-@dp.message(MyStates.set_alias)
-async def process_alias(msg: types.Message, state: FSMContext):
-    u = get_u(msg.from_user.id)
-    new_alias = msg.text.strip()
-    if not new_alias.isalnum():
-        return await msg.answer("❌ Ник должен состоять только из букв и цифр.")
-    
+@dp.callback_query(F.data == "rand_alias")
+async def rand_alias(call: types.CallbackQuery):
+    u = get_user(call.from_user.id)
+    prefixes = ['cool', 'anon', 'shadow', 'mystic', 'star', 'wild']
+    for _ in range(5):
+        alias = f"{random.choice(prefixes)}_{random.randint(10,999)}"
+        if not cur.execute("SELECT id FROM users WHERE alias = ?", (alias,)).fetchone():
+            cur.execute("UPDATE users SET alias = ? WHERE tg_id = ?", (alias, call.from_user.id))
+            db.commit()
+            me = await bot.get_me()
+            await call.message.edit_text(T[u[3]]['alias_ok'].format(link=f"t.me/{me.username}?start={alias}"))
+            return
+    await call.answer("❌ Ошибка", show_alert=True)
+
+@dp.message(State.alias)
+async def save_alias(m: types.Message, state: State):
+    u = get_user(m.from_user.id)
+    alias = m.text.strip().lower()
+    if not alias.replace('_', '').isalnum() or len(alias) < 3 or len(alias) > 20:
+        return await m.answer(T[u[3]]['alias_bad'])
+    if cur.execute("SELECT id FROM users WHERE alias = ? AND tg_id != ?", (alias, m.from_user.id)).fetchone():
+        return await m.answer(T[u[3]]['alias_bad'])
+    cur.execute("UPDATE users SET alias = ? WHERE tg_id = ?", (alias, m.from_user.id))
+    db.commit()
+    me = await bot.get_me()
+    await m.answer(T[u[3]]['alias_ok'].format(link=f"t.me/{me.username}?start={alias}"))
+    await state.clear()
+
+@dp.message(State.txt)
+async def send_anon(m: types.Message, state: State):
+    u = get_user(m.from_user.id)
+    if not u: return await m.answer("🚫 Забанен")
+    if not await check_sub(m.from_user.id):
+        return await m.answer(T[u[3]]['sub_required'], reply_markup=sub_kb(u[3]))
+    data = await state.get_data()
     try:
-        cur.execute("UPDATE users SET alias = ? WHERE tg_id = ?", (new_alias, msg.from_user.id))
+        res = await m.copy_to(data['t_id'])
+        cur.execute("INSERT INTO msgs (s_id, r_id, m_id) VALUES (?, ?, ?)", (m.from_user.id, data['t_id'], res.message_id))
+        cur.execute("UPDATE users SET sent = sent + 1 WHERE tg_id = ?", (m.from_user.id,))
+        cur.execute("UPDATE users SET rec = rec + 1 WHERE tg_id = ?", (data['t_id'],))
         db.commit()
-        await msg.answer(f"✅ Готово! Ваша новая ссылка:\n<code>t.me/{(await bot.get_me()).username}?start={new_alias}</code>")
-        await state.clear()
-    except:
-        await msg.answer("❌ Этот ник уже занят другим пользователем.")
+        add_exp(m.from_user.id)
+        ikb = InlineKeyboardBuilder()
+        ikb.button(text=T[u[3]]['del'], callback_data=f"del_{cur.lastrowid}")
+        await m.answer(T[u[3]]['ok'], reply_markup=ikb.as_markup())
+        rkb = InlineKeyboardBuilder()
+        rkb.button(text=T[u[3]]['rep'], callback_data=f"rep_{m.from_user.id}")
+        await bot.send_message(data['t_id'], T[u[3]]['new'], reply_markup=rkb.as_markup())
+    except: await m.answer("❌ Ошибка")
+    await state.clear()
 
 @dp.callback_query(F.data.startswith("rep_"))
-async def reply_call(call: types.CallbackQuery, state: FSMContext):
-    target = call.data.split("_")[1]
-    await state.update_data(t_id=target)
-    await call.message.answer("🚀 <b>Введите ваш ответ:</b>")
-    await state.set_state(MyStates.txt)
+async def reply_msg(call: types.CallbackQuery, state: State):
+    await state.update_data(t_id=int(call.data.split("_")[1]))
+    u = get_user(call.from_user.id)
+    await call.message.answer(T[u[3]]['go'])
+    await state.set_state(State.txt)
     await call.answer()
 
 @dp.callback_query(F.data.startswith("del_"))
-async def delete_call(call: types.CallbackQuery):
+async def del_msg(call: types.CallbackQuery):
     mid = call.data.split("_")[1]
     m = cur.execute("SELECT * FROM msgs WHERE id = ?", (mid,)).fetchone()
     if m:
-        try:
-            await bot.delete_message(m[2], m[3])
-            await call.message.edit_text("🗑 <b>Вы удалили это сообщение.</b>")
-        except:
-            await call.answer("Не удалось удалить.")
+        try: await bot.delete_message(m[2], m[3])
+        except: pass
+        await call.message.edit_text("🗑 Удалено")
 
-async def run():
-    print("--- BOT STARTED ---")
+# ============= АДМИНКА (с рассылкой и каналами) =============
+
+@dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
+async def admin(m: types.Message):
+    if m.from_user.id != ADMIN_ID: return
+    cnt = cur.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    channels_cnt = cur.execute("SELECT COUNT(*) FROM channels").fetchone()[0]
+    ikb = InlineKeyboardBuilder()
+    ikb.button(text="📢 Рассылка", callback_data="admin_broadcast")
+    ikb.button(text="🔗 Каналы", callback_data="admin_channels")
+    ikb.adjust(1)
+    await m.answer(f"👑 Админ-панель\n\n👥 Юзеров: {cnt}\n📢 Каналов: {channels_cnt}", reply_markup=ikb.as_markup())
+
+# === УПРАВЛЕНИЕ КАНАЛАМИ ===
+@dp.callback_query(F.data == "admin_channels", F.from_user.id == ADMIN_ID)
+async def admin_channels(call: types.CallbackQuery):
+    channels = cur.execute("SELECT id, chat_id, link FROM channels").fetchall()
+    if not channels:
+        text = "📢 Нет обязательных каналов\n\n➕ Добавь канал кнопкой ниже"
+    else:
+        text = "📢 <b>Обязательные каналы:</b>\n\n"
+        for cid, chat_id, link in channels:
+            text += f"• {link}\n"
+    
+    ikb = InlineKeyboardBuilder()
+    ikb.button(text="➕ Добавить канал", callback_data="admin_add_channel")
+    ikb.button(text="🗑 Удалить все", callback_data="admin_del_channels")
+    ikb.button(text="⬅️ Назад", callback_data="admin_back")
+    ikb.adjust(1)
+    await call.message.edit_text(text, reply_markup=ikb.as_markup())
+    await call.answer()
+
+@dp.callback_query(F.data == "admin_add_channel", F.from_user.id == ADMIN_ID)
+async def admin_add_channel(call: types.CallbackQuery, state: State):
+    await call.message.answer("📢 Отправь ссылку на канал (бот должен быть админом):\nПример: https://t.me/channel_name")
+    await state.set_state(State.add_channel)
+    await call.answer()
+
+@dp.message(State.add_channel, F.from_user.id == ADMIN_ID)
+async def save_channel(m: types.Message, state: State):
+    link = m.text.strip()
+    # Получаем chat_id из ссылки
+    try:
+        username = link.split("t.me/")[1].split("?")[0]
+        chat = await bot.get_chat(f"@{username}")
+        chat_id = chat.id
+        cur.execute("INSERT INTO channels (chat_id, link) VALUES (?, ?)", (chat_id, link))
+        db.commit()
+        await m.answer(f"✅ Канал {link} добавлен!\nТеперь пользователи должны подписаться на него.")
+    except Exception as e:
+        await m.answer(f"❌ Ошибка: {e}\nУбедись что бот админ в канале и ссылка верная.")
+    await state.clear()
+
+@dp.callback_query(F.data == "admin_del_channels", F.from_user.id == ADMIN_ID)
+async def del_channels(call: types.CallbackQuery):
+    cur.execute("DELETE FROM channels")
+    db.commit()
+    await call.message.edit_text("✅ Все каналы удалены")
+    await call.answer()
+
+# === РАССЫЛКА ===
+@dp.callback_query(F.data == "admin_broadcast", F.from_user.id == ADMIN_ID)
+async def admin_broadcast(call: types.CallbackQuery, state: State):
+    await call.message.answer("📢 Перешли мне сообщение для рассылки (текст, фото, видео):\n\n/exit - отмена")
+    await state.set_state(State.broadcast)
+    await call.answer()
+
+@dp.message(State.broadcast, F.from_user.id == ADMIN_ID)
+async def do_broadcast(m: types.Message, state: State):
+    if m.text == "/exit":
+        await state.clear()
+        return await m.answer("❌ Отменено")
+    
+    users = cur.execute("SELECT tg_id FROM users").fetchall()
+    ok = 0
+    await m.answer(f"🚀 Начинаю рассылку для {len(users)} пользователей...")
+    
+    for (uid,) in users:
+        try:
+            await m.copy_to(uid)
+            ok += 1
+            await asyncio.sleep(0.05)  # защита от спама
+        except:
+            pass
+    
+    await m.answer(f"✅ Рассылка завершена!\n📨 Доставлено: {ok}/{len(users)}")
+    await state.clear()
+
+@dp.callback_query(F.data == "admin_back", F.from_user.id == ADMIN_ID)
+async def admin_back(call: types.CallbackQuery):
+    await admin(call.message)
+
+# ============= ЗАПУСК =============
+async def main():
+    print("🤖 Бот запущен!")
+    print(f"👑 Админ: {ADMIN_ID}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(run())
+    asyncio.run(main())
