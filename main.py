@@ -35,39 +35,167 @@ class State(StatesGroup):
     broadcast = State()  # Для рассылки
     add_channel = State()  # Для добавления канала
 
-# ТЕКСТЫ
+# ТЕКСТЫ (КРАСИВЫЙ ДИЗАЙН)
 T = {
     'ru': {
-        'start': "🌟 <b>AnonyChat</b>\n\n🔗 <code>{link}</code>\n\n💡 Размести ссылку в соцсетях!",
-        'profile': "👤 <b>Профиль</b>\n\n📤 Отправлено: {s}\n📥 Получено: {r}\n🏆 Уровень: {lvl}\n🔗 <code>{link}</code>",
-        'go': "✍️ Напиши анонимное сообщение:",
-        'ok': "✅ Доставлено! +5 опыта",
-        'new': "📬 Новое сообщение!",
+        'start': "🤫 <b>Анонимные сообщения</b>\n\n"
+                 "<b>Что умеет этот бот?</b>\n\n"
+                 "• 📩 Получать анонимные вопросы\n"
+                 "• 💬 Отвечать не раскрывая себя\n"
+                 "• 🔗 Красивая ссылка для соцсетей\n"
+                 "• 🎁 Повышай уровень за активность\n\n"
+                 "👇 <i>Нажми «Начать», чтобы отправлять анонимные сообщения</i> 🚫\n\n"
+                 "──────────────\n"
+                 "<b>📎 Ваша ссылка:</b>\n"
+                 "<code>{link}</code>\n\n"
+                 "✨ <i>Разместите эту ссылку в описании профиля Telegram, TikTok или Instagram, чтобы вам могли написать</i> 😉",
+        
+        'profile': "👤 <b>ТВОЙ ПРОФИЛЬ</b>\n\n"
+                   "📊 <b>Статистика:</b>\n"
+                   "├ ✉️ Получено: <code>{r}</code>\n"
+                   "├ 📤 Отправлено: <code>{s}</code>\n"
+                   "├ 🏆 Уровень: <code>{lvl}</code>\n"
+                   "└ ⭐ Опыт: <code>{exp}</code>/<code>{next_exp}</code>\n\n"
+                   "🔗 <b>Твоя ссылка:</b>\n"
+                   "<code>{link}</code>\n\n"
+                   "💡 <i>Чем больше сообщений — тем выше уровень!</i>",
+        
+        'go': "✍️ <b>Напиши анонимное сообщение...</b>\n\n"
+              "💬 <i>Твой собеседник не узнает, кто ты 🔥</i>",
+        
+        'ok': "✅ <b>Сообщение доставлено!</b>\n\n"
+              "✨ +5 опыта\n"
+              "🎯 <i>Продолжай в том же духе!</i>",
+        
+        'new': "📬 <b>НОВОЕ АНОНИМНОЕ СООБЩЕНИЕ!</b>\n\n"
+               "💭 <i>Кто-то хочет с тобой пообщаться...</i>\n\n"
+               "👇 Нажми «Ответить», чтобы написать",
+        
         'del': "🗑 Удалить",
         'rep': "💬 Ответить",
-        'link': "🔗 <b>Управление ссылкой</b>\n\n<code>{link}</code>\n\n👆 Переходов: {clicks}",
-        'alias_ask': "✏️ Введи новый alias (буквы/цифры/_, 3-20 символов):",
-        'alias_ok': "✅ Готово! Твоя ссылка:\n<code>{link}</code>",
-        'alias_bad': "❌ Занят или неверный формат!",
-        'sub_required': "⚠️ <b>Подпишись на каналы чтобы использовать бота!</b>",
+        
+        'link': "🔗 <b>УПРАВЛЕНИЕ ССЫЛКОЙ</b>\n\n"
+                "📎 <b>Твоя активная ссылка:</b>\n"
+                "<code>{link}</code>\n\n"
+                "📊 <b>Статистика:</b>\n"
+                "├ 👆 Переходов: <code>{clicks}</code>\n"
+                "└ ✉️ Сообщений: <code>{msgs}</code>\n\n"
+                "💡 <i>Красивая ссылка = больше сообщений!</i>",
+        
+        'alias_ask': "✏️ <b>ИЗМЕНЕНИЕ ССЫЛКИ</b>\n\n"
+                     "🔹 Введи новый alias (ник):\n\n"
+                     "📌 <b>Правила:</b>\n"
+                     "• Только буквы и цифры\n"
+                     "• Длина: 3-20 символов\n"
+                     "• Уникальный на весь бот\n\n"
+                     "✨ <b>Примеры:</b>\n"
+                     "• <code>john_2024</code>\n"
+                     "• <code>anonymous_cat</code>\n"
+                     "• <code>my_blog</code>\n\n"
+                     "❌ /cancel - отмена",
+        
+        'alias_ok': "✅ <b>ALIAS УСПЕШНО ИЗМЕНЁН!</b>\n\n"
+                    "🔗 <b>Твоя новая ссылка:</b>\n"
+                    "<code>{link}</code>\n\n"
+                    "📢 <i>Размести новую ссылку в соцсетях прямо сейчас!</i>",
+        
+        'alias_bad': "❌ <b>ОШИБКА!</b>\n\n"
+                     "Этот alias занят или не подходит.\n\n"
+                     "📌 <b>Попробуй:</b>\n"
+                     "• Добавить цифры в конец\n"
+                     "• Использовать нижнее подчеркивание\n"
+                     "• Нажать «🎲 Случайный»",
+        
+        'sub_required': "⚠️ <b>ТРЕБУЕТСЯ ПОДПИСКА</b>\n\n"
+                        "Чтобы пользоваться ботом, подпишись на наши каналы:\n\n"
+                        "👇 <i>После подписки нажми «Проверить»</i>",
+        
         'check_sub': "✅ Проверить подписку",
-        'sub_ok': "✅ Спасибо за подписку! Теперь ты можешь пользоваться ботом.",
+        'sub_ok': "✅ <b>СПАСИБО ЗА ПОДПИСКУ!</b>\n\n"
+                  "Теперь ты можешь пользоваться ботом 🤫",
+        
+        'settings': "⚙️ <b>НАСТРОЙКИ</b>\n\n"
+                    "Выбери что хочешь изменить:",
+        
+        'help': "📚 <b>ПОМОЩЬ</b>\n\n"
+                "🔹 <b>Основные команды:</b>\n"
+                "/start - Главное меню\n"
+                "/profile - Мой профиль\n"
+                "/link - Моя ссылка\n"
+                "/help - Помощь\n\n"
+                "🎯 <b>Как получить уровень?</b>\n"
+                "Отправляй сообщения и получай опыт!\n\n"
+                "💬 <b>По вопросам:</b} @support",
     },
     'en': {
-        'start': "🌟 <b>AnonyChat</b>\n\n🔗 <code>{link}</code>\n\n💡 Share the link!",
-        'profile': "👤 <b>Profile</b>\n\n📤 Sent: {s}\n📥 Received: {r}\n🏆 Level: {lvl}\n🔗 <code>{link}</code>",
-        'go': "✍️ Send anonymous message:",
-        'ok': "✅ Delivered! +5 XP",
-        'new': "📬 New message!",
+        'start': "🤫 <b>Anonymous Messages</b>\n\n"
+                 "<b>What can this bot do?</b>\n\n"
+                 "• 📩 Receive anonymous questions\n"
+                 "• 💬 Reply without revealing yourself\n"
+                 "• 🔗 Beautiful link for social media\n"
+                 "• 🎁 Level up for activity\n\n"
+                 "👇 <i>Click «Start» to send anonymous messages</i> 🚫\n\n"
+                 "──────────────\n"
+                 "<b>📎 Your link:</b>\n"
+                 "<code>{link}</code>\n\n"
+                 "✨ <i>Place this link in your bio to receive messages</i> 😉",
+        
+        'profile': "👤 <b>YOUR PROFILE</b>\n\n"
+                   "📊 <b>Statistics:</b>\n"
+                   "├ ✉️ Received: <code>{r}</code>\n"
+                   "├ 📤 Sent: <code>{s}</code>\n"
+                   "├ 🏆 Level: <code>{lvl}</code>\n"
+                   "└ ⭐ XP: <code>{exp}</code>/<code>{next_exp}</code>\n\n"
+                   "🔗 <b>Your link:</b>\n"
+                   "<code>{link}</code>",
+        
+        'go': "✍️ <b>Write an anonymous message...</b>\n\n"
+              "💬 <i>The recipient won't know who you are 🔥</i>",
+        
+        'ok': "✅ <b>Message delivered!</b>\n\n"
+              "✨ +5 XP",
+        
+        'new': "📬 <b>NEW ANONYMOUS MESSAGE!</b>\n\n"
+               "👇 Click «Reply» to answer",
+        
         'del': "🗑 Delete",
         'rep': "💬 Reply",
-        'link': "🔗 <b>Link Manager</b>\n\n<code>{link}</code>\n\n👆 Clicks: {clicks}",
-        'alias_ask': "✏️ Enter new alias (letters/numbers/_, 3-20 chars):",
-        'alias_ok': "✅ Done! Your link:\n<code>{link}</code>",
-        'alias_bad': "❌ Taken or invalid format!",
-        'sub_required': "⚠️ <b>Subscribe to channels to use the bot!</b>",
+        
+        'link': "🔗 <b>LINK MANAGER</b>\n\n"
+                "📎 <b>Your active link:</b>\n"
+                "<code>{link}</code>\n\n"
+                "📊 <b>Statistics:</b>\n"
+                "├ 👆 Clicks: <code>{clicks}</code>\n"
+                "└ ✉️ Messages: <code>{msgs}</code>",
+        
+        'alias_ask': "✏️ <b>CHANGE LINK</b>\n\n"
+                     "🔹 Enter new alias:\n\n"
+                     "📌 <b>Rules:</b>\n"
+                     "• Letters and numbers only\n"
+                     "• Length: 3-20 characters\n"
+                     "• Unique\n\n"
+                     "❌ /cancel - cancel",
+        
+        'alias_ok': "✅ <b>ALIAS CHANGED!</b>\n\n"
+                    "🔗 <b>Your new link:</b>\n"
+                    "<code>{link}</code>",
+        
+        'alias_bad': "❌ <b>ERROR!</b>\n\n"
+                     "This alias is taken or invalid.",
+        
+        'sub_required': "⚠️ <b>SUBSCRIPTION REQUIRED</b>\n\n"
+                        "Subscribe to our channels to use the bot:\n\n"
+                        "👇 <i>Click «Check» after subscribing</i>",
+        
         'check_sub': "✅ Check subscription",
-        'sub_ok': "✅ Thanks for subscribing! Now you can use the bot.",
+        'sub_ok': "✅ <b>THANKS FOR SUBSCRIBING!</b>",
+        
+        'settings': "⚙️ <b>SETTINGS</b>",
+        'help': "📚 <b>HELP</b>\n\n"
+                "/start - Main menu\n"
+                "/profile - My profile\n"
+                "/link - My link\n"
+                "/help - Help",
     }
 }
 
