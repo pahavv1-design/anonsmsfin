@@ -25,17 +25,17 @@ cur.execute('''CREATE TABLE IF NOT EXISTS users (
     lang TEXT DEFAULT 'ru', sent INTEGER DEFAULT 0, rec INTEGER DEFAULT 0,
     level INTEGER DEFAULT 1, exp INTEGER DEFAULT 0, clicks INTEGER DEFAULT 0)''')
 cur.execute("CREATE TABLE IF NOT EXISTS msgs (id INTEGER PRIMARY KEY AUTOINCREMENT, s_id BIGINT, r_id BIGINT, m_id INTEGER)")
-cur.execute("CREATE TABLE IF NOT EXISTS channels (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id BIGINT, link TEXT)")  # Для подписки
+cur.execute("CREATE TABLE IF NOT EXISTS channels (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id BIGINT, link TEXT)")
 cur.execute("CREATE TABLE IF NOT EXISTS blacklist (user_id BIGINT PRIMARY KEY, until TIMESTAMP)")
 db.commit()
 
 class State(StatesGroup):
     txt = State()
     alias = State()
-    broadcast = State()  # Для рассылки
-    add_channel = State()  # Для добавления канала
+    broadcast = State()
+    add_channel = State()
 
-# ТЕКСТЫ (КРАСИВЫЙ ДИЗАЙН)
+# ТЕКСТЫ (КРАСИВЫЕ)
 T = {
     'ru': {
         'start': "🤫 <b>Анонимные сообщения</b>\n\n"
@@ -49,7 +49,6 @@ T = {
                  "<b>📎 Ваша ссылка:</b>\n"
                  "<code>{link}</code>\n\n"
                  "✨ <i>Разместите эту ссылку в описании профиля Telegram, TikTok или Instagram, чтобы вам могли написать</i> 😉",
-        
         'profile': "👤 <b>ТВОЙ ПРОФИЛЬ</b>\n\n"
                    "📊 <b>Статистика:</b>\n"
                    "├ ✉️ Получено: <code>{r}</code>\n"
@@ -59,143 +58,41 @@ T = {
                    "🔗 <b>Твоя ссылка:</b>\n"
                    "<code>{link}</code>\n\n"
                    "💡 <i>Чем больше сообщений — тем выше уровень!</i>",
-        
         'go': "✍️ <b>Напиши анонимное сообщение...</b>\n\n"
               "💬 <i>Твой собеседник не узнает, кто ты 🔥</i>",
-        
-        'ok': "✅ <b>Сообщение доставлено!</b>\n\n"
-              "✨ +5 опыта\n"
-              "🎯 <i>Продолжай в том же духе!</i>",
-        
-        'new': "📬 <b>НОВОЕ АНОНИМНОЕ СООБЩЕНИЕ!</b>\n\n"
-               "💭 <i>Кто-то хочет с тобой пообщаться...</i>\n\n"
-               "👇 Нажми «Ответить», чтобы написать",
-        
+        'ok': "✅ <b>Сообщение доставлено!</b>\n\n✨ +5 опыта",
+        'new': "📬 <b>НОВОЕ АНОНИМНОЕ СООБЩЕНИЕ!</b>\n\n👇 Нажми «Ответить»",
         'del': "🗑 Удалить",
         'rep': "💬 Ответить",
-        
         'link': "🔗 <b>УПРАВЛЕНИЕ ССЫЛКОЙ</b>\n\n"
-                "📎 <b>Твоя активная ссылка:</b>\n"
-                "<code>{link}</code>\n\n"
-                "📊 <b>Статистика:</b>\n"
-                "├ 👆 Переходов: <code>{clicks}</code>\n"
-                "└ ✉️ Сообщений: <code>{msgs}</code>\n\n"
-                "💡 <i>Красивая ссылка = больше сообщений!</i>",
-        
-        'alias_ask': "✏️ <b>ИЗМЕНЕНИЕ ССЫЛКИ</b>\n\n"
-                     "🔹 Введи новый alias (ник):\n\n"
-                     "📌 <b>Правила:</b>\n"
-                     "• Только буквы и цифры\n"
-                     "• Длина: 3-20 символов\n"
-                     "• Уникальный на весь бот\n\n"
-                     "✨ <b>Примеры:</b>\n"
-                     "• <code>john_2024</code>\n"
-                     "• <code>anonymous_cat</code>\n"
-                     "• <code>my_blog</code>\n\n"
-                     "❌ /cancel - отмена",
-        
-        'alias_ok': "✅ <b>ALIAS УСПЕШНО ИЗМЕНЁН!</b>\n\n"
-                    "🔗 <b>Твоя новая ссылка:</b>\n"
-                    "<code>{link}</code>\n\n"
-                    "📢 <i>Размести новую ссылку в соцсетях прямо сейчас!</i>",
-        
-        'alias_bad': "❌ <b>ОШИБКА!</b>\n\n"
-                     "Этот alias занят или не подходит.\n\n"
-                     "📌 <b>Попробуй:</b>\n"
-                     "• Добавить цифры в конец\n"
-                     "• Использовать нижнее подчеркивание\n"
-                     "• Нажать «🎲 Случайный»",
-        
-        'sub_required': "⚠️ <b>ТРЕБУЕТСЯ ПОДПИСКА</b>\n\n"
-                        "Чтобы пользоваться ботом, подпишись на наши каналы:\n\n"
-                        "👇 <i>После подписки нажми «Проверить»</i>",
-        
-        'check_sub': "✅ Проверить подписку",
-        'sub_ok': "✅ <b>СПАСИБО ЗА ПОДПИСКУ!</b>\n\n"
-                  "Теперь ты можешь пользоваться ботом 🤫",
-        
-        'settings': "⚙️ <b>НАСТРОЙКИ</b>\n\n"
-                    "Выбери что хочешь изменить:",
-        
-        'help': "📚 <b>ПОМОЩЬ</b>\n\n"
-                "🔹 <b>Основные команды:</b>\n"
-                "/start - Главное меню\n"
-                "/profile - Мой профиль\n"
-                "/link - Моя ссылка\n"
-                "/help - Помощь\n\n"
-                "🎯 <b>Как получить уровень?</b>\n"
-                "Отправляй сообщения и получай опыт!\n\n"
-                "💬 <b>По вопросам:</b} @support",
+                "📎 <b>Твоя ссылка:</b>\n<code>{link}</code>\n\n"
+                "📊 <b>Статистика:</b>\n├ 👆 Переходов: <code>{clicks}</code>\n└ ✉️ Сообщений: <code>{msgs}</code>",
+        'alias_ask': "✏️ <b>Введи новый alias:</b>\n\n📌 Только буквы/цифры, 3-20 символов",
+        'alias_ok': "✅ <b>ALIAS ИЗМЕНЁН!</b>\n\n🔗 <code>{link}</code>",
+        'alias_bad': "❌ Занят или неверный формат!",
+        'sub_required': "⚠️ <b>ПОДПИШИСЬ НА КАНАЛЫ</b>",
+        'check_sub': "✅ Проверить",
+        'sub_ok': "✅ Спасибо! Теперь можно пользоваться ботом.",
+        'settings': "⚙️ <b>НАСТРОЙКИ</b>",
+        'help': "📚 <b>ПОМОЩЬ</b>\n\n/start - Главное меню\n/profile - Профиль\n/link - Ссылка",
     },
     'en': {
-        'start': "🤫 <b>Anonymous Messages</b>\n\n"
-                 "<b>What can this bot do?</b>\n\n"
-                 "• 📩 Receive anonymous questions\n"
-                 "• 💬 Reply without revealing yourself\n"
-                 "• 🔗 Beautiful link for social media\n"
-                 "• 🎁 Level up for activity\n\n"
-                 "👇 <i>Click «Start» to send anonymous messages</i> 🚫\n\n"
-                 "──────────────\n"
-                 "<b>📎 Your link:</b>\n"
-                 "<code>{link}</code>\n\n"
-                 "✨ <i>Place this link in your bio to receive messages</i> 😉",
-        
-        'profile': "👤 <b>YOUR PROFILE</b>\n\n"
-                   "📊 <b>Statistics:</b>\n"
-                   "├ ✉️ Received: <code>{r}</code>\n"
-                   "├ 📤 Sent: <code>{s}</code>\n"
-                   "├ 🏆 Level: <code>{lvl}</code>\n"
-                   "└ ⭐ XP: <code>{exp}</code>/<code>{next_exp}</code>\n\n"
-                   "🔗 <b>Your link:</b>\n"
-                   "<code>{link}</code>",
-        
-        'go': "✍️ <b>Write an anonymous message...</b>\n\n"
-              "💬 <i>The recipient won't know who you are 🔥</i>",
-        
-        'ok': "✅ <b>Message delivered!</b>\n\n"
-              "✨ +5 XP",
-        
-        'new': "📬 <b>NEW ANONYMOUS MESSAGE!</b>\n\n"
-               "👇 Click «Reply» to answer",
-        
+        'start': "🤫 <b>Anonymous Messages</b>\n\n📎 <code>{link}</code>",
+        'profile': "👤 <b>Profile</b>\n\n📤 Sent: {s}\n📥 Received: {r}\n🏆 Level: {lvl}",
+        'go': "✍️ Send anonymous message:",
+        'ok': "✅ Delivered! +5 XP",
+        'new': "📬 New message!",
         'del': "🗑 Delete",
         'rep': "💬 Reply",
-        
-        'link': "🔗 <b>LINK MANAGER</b>\n\n"
-                "📎 <b>Your active link:</b>\n"
-                "<code>{link}</code>\n\n"
-                "📊 <b>Statistics:</b>\n"
-                "├ 👆 Clicks: <code>{clicks}</code>\n"
-                "└ ✉️ Messages: <code>{msgs}</code>",
-        
-        'alias_ask': "✏️ <b>CHANGE LINK</b>\n\n"
-                     "🔹 Enter new alias:\n\n"
-                     "📌 <b>Rules:</b>\n"
-                     "• Letters and numbers only\n"
-                     "• Length: 3-20 characters\n"
-                     "• Unique\n\n"
-                     "❌ /cancel - cancel",
-        
-        'alias_ok': "✅ <b>ALIAS CHANGED!</b>\n\n"
-                    "🔗 <b>Your new link:</b>\n"
-                    "<code>{link}</code>",
-        
-        'alias_bad': "❌ <b>ERROR!</b>\n\n"
-                     "This alias is taken or invalid.",
-        
-        'sub_required': "⚠️ <b>SUBSCRIPTION REQUIRED</b>\n\n"
-                        "Subscribe to our channels to use the bot:\n\n"
-                        "👇 <i>Click «Check» after subscribing</i>",
-        
-        'check_sub': "✅ Check subscription",
-        'sub_ok': "✅ <b>THANKS FOR SUBSCRIBING!</b>",
-        
-        'settings': "⚙️ <b>SETTINGS</b>",
-        'help': "📚 <b>HELP</b>\n\n"
-                "/start - Main menu\n"
-                "/profile - My profile\n"
-                "/link - My link\n"
-                "/help - Help",
+        'link': "🔗 <b>Link</b>\n<code>{link}</code>\n👆 Clicks: {clicks}\n✉️ Messages: {msgs}",
+        'alias_ask': "✏️ Enter new alias:",
+        'alias_ok': "✅ Alias changed!\n<code>{link}</code>",
+        'alias_bad': "❌ Invalid or taken!",
+        'sub_required': "⚠️ Subscribe to channels",
+        'check_sub': "✅ Check",
+        'sub_ok': "✅ Thanks!",
+        'settings': "⚙️ Settings",
+        'help': "📚 Help",
     }
 }
 
@@ -212,10 +109,9 @@ def add_exp(uid):
     cur.execute("UPDATE users SET exp = exp + 5, level = 1 + (exp/100) WHERE tg_id = ?", (uid,))
     db.commit()
 
-# ПРОВЕРКА ПОДПИСКИ
 async def check_sub(user_id):
     channels = cur.execute("SELECT chat_id FROM channels").fetchall()
-    if not channels:  # Если нет обязательных каналов - пропускаем
+    if not channels:
         return True
     for (chat_id,) in channels:
         try:
@@ -226,7 +122,6 @@ async def check_sub(user_id):
             continue
     return True
 
-# КЛАВИАТУРА ПОДПИСКИ
 def sub_kb(lang):
     ikb = InlineKeyboardBuilder()
     channels = cur.execute("SELECT link FROM channels").fetchall()
@@ -251,12 +146,10 @@ async def start(m: types.Message, state: State):
     args = m.text.split()
     me = await bot.get_me()
     
-    # Переход по ссылке
     if len(args) > 1:
         target = args[1]
         tu = cur.execute("SELECT tg_id FROM users WHERE tg_id = ? OR alias = ?", (target, target)).fetchone()
         if tu and tu[0] != m.from_user.id:
-            # ПРОВЕРКА ПОДПИСКИ перед отправкой
             if not await check_sub(m.from_user.id):
                 u = get_user(m.from_user.id)
                 if u:
@@ -271,9 +164,8 @@ async def start(m: types.Message, state: State):
             return
     
     u = get_user(m.from_user.id)
-    if not u: return await m.answer("🚫 Бан до снятия блокировки")
+    if not u: return await m.answer("🚫 Бан")
     
-    # ПРОВЕРКА ПОДПИСКИ
     if not await check_sub(m.from_user.id):
         return await m.answer(T[u[3]]['sub_required'], reply_markup=sub_kb(u[3]))
     
@@ -281,7 +173,6 @@ async def start(m: types.Message, state: State):
     link = f"t.me/{me.username}?start={alias}"
     await m.answer(T[u[3]]['start'].format(link=link), reply_markup=kb(u[3]))
 
-# ПРОВЕРКА ПОДПИСКИ (кнопка)
 @dp.callback_query(F.data == "check_sub")
 async def check_sub_callback(call: types.CallbackQuery):
     if await check_sub(call.from_user.id):
@@ -293,7 +184,7 @@ async def check_sub_callback(call: types.CallbackQuery):
         await call.message.answer(T[u[3]]['start'].format(link=link), reply_markup=kb(u[3]))
     else:
         u = get_user(call.from_user.id)
-        await call.answer("❌ Подпишись на все каналы!" if u[3]=='ru' else "❌ Subscribe to all channels!", show_alert=True)
+        await call.answer("❌ Подпишись на все каналы!" if u[3]=='ru' else "❌ Subscribe!", show_alert=True)
 
 @dp.message(F.text.in_(["👤 Profile", "👤 Профиль"]))
 async def profile(m: types.Message):
@@ -304,7 +195,8 @@ async def profile(m: types.Message):
     me = await bot.get_me()
     alias = u[2] or str(u[1])
     link = f"t.me/{me.username}?start={alias}"
-    await m.answer(T[u[3]]['profile'].format(s=u[4], r=u[5], lvl=u[6], link=link), reply_markup=kb(u[3]))
+    next_exp = ((u[6] * 100) + 100) - u[7]
+    await m.answer(T[u[3]]['profile'].format(s=u[4], r=u[5], lvl=u[6], exp=u[7], next_exp=next_exp, link=link), reply_markup=kb(u[3]))
 
 @dp.message(F.text.in_(["🔗 Link", "🔗 Ссылка"]))
 async def link_menu(m: types.Message):
@@ -318,7 +210,7 @@ async def link_menu(m: types.Message):
     ikb = InlineKeyboardBuilder()
     ikb.button(text="✏️ Изменить" if u[3]=='ru' else "✏️ Change", callback_data="ch_alias")
     ikb.button(text="🎲 Случайный" if u[3]=='ru' else "🎲 Random", callback_data="rand_alias")
-    await m.answer(T[u[3]]['link'].format(link=link, clicks=u[8] if len(u)>8 else 0), reply_markup=ikb.as_markup())
+    await m.answer(T[u[3]]['link'].format(link=link, clicks=u[8] if len(u)>8 else 0, msgs=u[5]), reply_markup=ikb.as_markup())
 
 @dp.message(F.text.in_(["⚙️ Settings", "⚙️ Настройки"]))
 async def settings(m: types.Message):
@@ -412,7 +304,7 @@ async def del_msg(call: types.CallbackQuery):
         except: pass
         await call.message.edit_text("🗑 Удалено")
 
-# ============= АДМИНКА (с рассылкой и каналами) =============
+# ============= АДМИНКА =============
 
 @dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
 async def admin(m: types.Message):
@@ -425,19 +317,14 @@ async def admin(m: types.Message):
     ikb.adjust(1)
     await m.answer(f"👑 Админ-панель\n\n👥 Юзеров: {cnt}\n📢 Каналов: {channels_cnt}", reply_markup=ikb.as_markup())
 
-# === УПРАВЛЕНИЕ КАНАЛАМИ ===
 @dp.callback_query(F.data == "admin_channels", F.from_user.id == ADMIN_ID)
 async def admin_channels(call: types.CallbackQuery):
     channels = cur.execute("SELECT id, chat_id, link FROM channels").fetchall()
-    if not channels:
-        text = "📢 Нет обязательных каналов\n\n➕ Добавь канал кнопкой ниже"
-    else:
-        text = "📢 <b>Обязательные каналы:</b>\n\n"
-        for cid, chat_id, link in channels:
-            text += f"• {link}\n"
-    
+    text = "📢 Обязательные каналы:\n\n" if channels else "📢 Нет каналов\n\n"
+    for cid, chat_id, link in channels:
+        text += f"• {link}\n"
     ikb = InlineKeyboardBuilder()
-    ikb.button(text="➕ Добавить канал", callback_data="admin_add_channel")
+    ikb.button(text="➕ Добавить", callback_data="admin_add_channel")
     ikb.button(text="🗑 Удалить все", callback_data="admin_del_channels")
     ikb.button(text="⬅️ Назад", callback_data="admin_back")
     ikb.adjust(1)
@@ -446,23 +333,22 @@ async def admin_channels(call: types.CallbackQuery):
 
 @dp.callback_query(F.data == "admin_add_channel", F.from_user.id == ADMIN_ID)
 async def admin_add_channel(call: types.CallbackQuery, state: State):
-    await call.message.answer("📢 Отправь ссылку на канал (бот должен быть админом):\nПример: https://t.me/channel_name")
+    await call.message.answer("📢 Отправь ссылку на канал:\nПример: https://t.me/channel")
     await state.set_state(State.add_channel)
     await call.answer()
 
 @dp.message(State.add_channel, F.from_user.id == ADMIN_ID)
 async def save_channel(m: types.Message, state: State):
     link = m.text.strip()
-    # Получаем chat_id из ссылки
     try:
         username = link.split("t.me/")[1].split("?")[0]
         chat = await bot.get_chat(f"@{username}")
         chat_id = chat.id
         cur.execute("INSERT INTO channels (chat_id, link) VALUES (?, ?)", (chat_id, link))
         db.commit()
-        await m.answer(f"✅ Канал {link} добавлен!\nТеперь пользователи должны подписаться на него.")
+        await m.answer(f"✅ Канал {link} добавлен!")
     except Exception as e:
-        await m.answer(f"❌ Ошибка: {e}\nУбедись что бот админ в канале и ссылка верная.")
+        await m.answer(f"❌ Ошибка: {e}")
     await state.clear()
 
 @dp.callback_query(F.data == "admin_del_channels", F.from_user.id == ADMIN_ID)
@@ -472,10 +358,9 @@ async def del_channels(call: types.CallbackQuery):
     await call.message.edit_text("✅ Все каналы удалены")
     await call.answer()
 
-# === РАССЫЛКА ===
 @dp.callback_query(F.data == "admin_broadcast", F.from_user.id == ADMIN_ID)
 async def admin_broadcast(call: types.CallbackQuery, state: State):
-    await call.message.answer("📢 Перешли мне сообщение для рассылки (текст, фото, видео):\n\n/exit - отмена")
+    await call.message.answer("📢 Перешли сообщение для рассылки:\n/exit - отмена")
     await state.set_state(State.broadcast)
     await call.answer()
 
@@ -484,20 +369,17 @@ async def do_broadcast(m: types.Message, state: State):
     if m.text == "/exit":
         await state.clear()
         return await m.answer("❌ Отменено")
-    
     users = cur.execute("SELECT tg_id FROM users").fetchall()
     ok = 0
-    await m.answer(f"🚀 Начинаю рассылку для {len(users)} пользователей...")
-    
+    await m.answer(f"🚀 Рассылка для {len(users)} пользователей...")
     for (uid,) in users:
         try:
             await m.copy_to(uid)
             ok += 1
-            await asyncio.sleep(0.05)  # защита от спама
+            await asyncio.sleep(0.05)
         except:
             pass
-    
-    await m.answer(f"✅ Рассылка завершена!\n📨 Доставлено: {ok}/{len(users)}")
+    await m.answer(f"✅ Готово! Доставлено: {ok}/{len(users)}")
     await state.clear()
 
 @dp.callback_query(F.data == "admin_back", F.from_user.id == ADMIN_ID)
@@ -506,7 +388,7 @@ async def admin_back(call: types.CallbackQuery):
 
 # ============= ЗАПУСК =============
 async def main():
-    print("🤖 Бот запущен!")
+    print("🤫 Бот Анонимных Сообщений запущен!")
     print(f"👑 Админ: {ADMIN_ID}")
     await dp.start_polling(bot)
 
