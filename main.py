@@ -242,3 +242,81 @@ async def run():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     asyncio.run(run())
+    # --- АДМИН ПАНЕЛЬ ---
+
+@dp.message(Command("admin"))
+async def admin_panel(msg: types.Message):
+    # Проверка на админа
+    if msg.from_user.id != ADMIN_ID:
+        return
+
+    # Считаем количество пользователей в базе
+    cur.execute("SELECT COUNT(*) FROM users")
+    total_users = cur.fetchone()[0]
+
+    # Считаем сколько сообщений было отправлено всего через бота
+    cur.execute("SELECT SUM(sent) FROM users")
+    total_messages = cur.fetchone()[0] or 0
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📢 Начать рассылку", callback_data="admin_broadcast")
+    kb.button(text="🔄 Обновить", callback_data="admin_stats_update")
+    kb.adjust(1)
+
+    await msg.answer(
+        f"🛠 <b>Панель администратора</b>\n\n"
+        f"👥 <b>Всего пользователей:</b> <code>{total_users}</code>\n"
+        f"✉️ <b>Всего анонимок:</b> <code>{total_messages}</code>\n\n"
+        f"<i>Статистика обновляется в реальном времени.</i>", 
+        reply_markup=kb.as_markup()
+    )
+
+# Обработка обновления статистики
+@dp.callback_query(F.data == "admin_stats_update")
+async def update_stats_call(call: types.CallbackQuery):
+    if call.from_user.id != ADMIN_ID: return
+    
+    cur.execute("SELECT COUNT(*) FROM users")
+    total_users = cur.fetchone()[0]
+    cur.execute("SELECT SUM(sent) FROM users")
+    total_messages = cur.fetchone()[0] or 0
+
+    try:
+        await call.message.edit_text(
+            f"🛠 <b>Панель администратора</b>\n\n"
+            f"👥 <b>Всего пользователей:</b> <code>{total_users}</code>\n"
+            f"✉️ <b>Всего анонимок:</b> <code>{total_messages}</code>\n\n"
+            f"<i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>",
+            reply_markup=call.message.reply_markup
+        )
+    except:
+        await call.answer("Данные актуальны!")
+    await call.answer()
+
+# Рассылка (как в прошлом сообщении)
+@dp.callback_query(F.data == "admin_broadcast")
+async def broadcast_step1(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id != ADMIN_ID: return
+    await call.message.answer("📢 <b>Введите сообщение для рассылки:</b>")
+    await state.set_state(MyStates.mail)
+    await call.answer()
+
+@dp.message(MyStates.mail)
+async def broadcast_step2(msg: types.Message, state: FSMContext):
+    if msg.from_user.id != ADMIN_ID: return
+    
+    users = cur.execute("SELECT tg_id FROM users").fetchall()
+    count, blocked = 0, 0
+    
+    status_msg = await msg.answer("⏳ <i>Рассылка...</i>")
+
+    for user in users:
+        try:
+            await msg.copy_to(chat_id=user[0])
+            count += 1
+            await asyncio.sleep(0.05)
+        except:
+            blocked += 1
+    
+    await status_msg.edit_text(f"✅ <b>Готово!</b>\n\nПолучили: {count}\nВ бане: {blocked}")
+    await state.clear()
